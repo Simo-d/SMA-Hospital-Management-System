@@ -5,10 +5,7 @@ import jade.wrapper.AgentContainer;
 import jade.wrapper.AgentController;
 import jade.wrapper.StaleProxyException;
 
-/**
- * Main class to start the Hospital Resource Allocation System
- * Master IA - Systèmes Multi-Agents Project
- */
+
 public class HospitalMain {
     public static void main(String[] args) {
         try {

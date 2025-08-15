@@ -11,10 +11,7 @@ import jade.domain.FIPAAgentManagement.ServiceDescription;
 import models.Equipment;
 import utils.MessageProtocol;
 
-/**
- * Equipment Agent - Manages medical equipment availability
- * Master IA - Systèmes Multi-Agents Project
- */
+
 public class EquipmentAgent extends Agent {
     private Equipment equipmentData;
     
@@ -141,7 +138,7 @@ public class EquipmentAgent extends Agent {
      */
     private class MaintenanceCheckBehaviour extends TickerBehaviour {
         public MaintenanceCheckBehaviour() {
-            super(myAgent, 60000); // Check every minute
+            super(myAgent, 60000); 
         }
         
         @Override
