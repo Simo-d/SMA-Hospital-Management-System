@@ -18,6 +18,9 @@ import models.Patient;
 import utils.MessageProtocol;
 
 import java.util.*;
+import java.io.ByteArrayInputStream;
+import java.io.ObjectInputStream;
+import java.io.IOException;
 
 /**
  * Monitoring Agent - Manages the GUI and monitors the hospital system
@@ -58,6 +61,49 @@ public class MonitoringAgent extends Agent {
         // Add behaviors
         addBehaviour(new ResourceMonitorBehaviour(this, 2000)); // Update every 2 seconds
         addBehaviour(new StatisticsCollectorBehaviour(this, 5000)); // Collect stats every 5 seconds
+        
+        // Add behavior to handle patient status responses
+         addBehaviour(new CyclicBehaviour() {
+             @Override
+             public void action() {
+                 MessageTemplate mt = MessageTemplate.and(
+                     MessageTemplate.MatchConversationId(MessageProtocol.STATUS_UPDATE),
+                     MessageTemplate.MatchPerformative(ACLMessage.INFORM)
+                 );
+                 
+                 ACLMessage msg = myAgent.receive(mt);
+                 if (msg != null) {
+                     try {
+                         // Deserialize the patient data
+                         ByteArrayInputStream bais = new ByteArrayInputStream(msg.getByteSequenceContent());
+                         ObjectInputStream ois = new ObjectInputStream(bais);
+                         Patient patient = (Patient) ois.readObject();
+                         
+                         // Update or add the patient to our list
+                         boolean found = false;
+                         for (int i = 0; i < patients.size(); i++) {
+                             if (patients.get(i).getName().equals(patient.getName())) {
+                                 patients.set(i, patient);
+                                 found = true;
+                                 break;
+                             }
+                         }
+                         
+                         if (!found) {
+                             patients.add(patient);
+                         }
+                         
+                         // Update the GUI immediately
+                         gui.updatePatientTable(patients);
+                         
+                     } catch (IOException | ClassNotFoundException e) {
+                         e.printStackTrace();
+                     }
+                 } else {
+                     block();
+                 }
+             }
+         });
     }
     
     /**
@@ -124,27 +170,20 @@ public class MonitoringAgent extends Agent {
             template.addServices(sd);
             
             try {
+                // Search for patient agents in the DF
                 DFAgentDescription[] result = DFService.search(myAgent, template);
+                System.out.println("Found " + result.length + " patient agents");
+                
+                // Request status from each patient agent
                 for (DFAgentDescription agent : result) {
-                    // For now, we'll create dummy patient data
-                    // In a real implementation, we would query each patient agent for its state
-                    String name = agent.getName().getLocalName();
-                    if (name.startsWith("Patient_")) {
-                        String[] parts = name.split("_");
-                        if (parts.length >= 2) {
-                            Patient patient = new Patient(parts[1], (int)(Math.random() * 5) + 1, 
-                                                      getRandomTreatment());
-                            patient.setStatus(getRandomStatus());
-                            patient.setWaitingTime((long)(Math.random() * 60000));
-                            
-                            if (!patient.getStatus().equals("WAITING")) {
-                                patient.setAssignedDoctor("Doctor_" + (int)(Math.random() * 5));
-                                patient.setAssignedRoom("Room_" + (int)(Math.random() * 5));
-                            }
-                            
-                            patients.add(patient);
-                        }
-                    }
+                    AID patientAID = agent.getName();
+                    
+                    // Send request for patient data
+                    ACLMessage request = new ACLMessage(ACLMessage.REQUEST);
+                    request.addReceiver(patientAID);
+                    request.setConversationId(MessageProtocol.STATUS_UPDATE);
+                    request.setContent("REQUEST_STATUS");
+                    myAgent.send(request);
                 }
             } catch (FIPAException fe) {
                 fe.printStackTrace();
@@ -277,6 +316,8 @@ public class MonitoringAgent extends Agent {
             gui.updateStatistics(totalPatients, avgWaitTime, successRate, resourceUtilization);
         }
     }
+    
+
     
     @Override
     protected void takeDown() {

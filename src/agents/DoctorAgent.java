@@ -37,7 +37,7 @@ public class DoctorAgent extends Agent {
             
             // Add behaviors
             addBehaviour(new HandlePatientAssignmentBehaviour());
-            addBehaviour(new UpdateAvailabilityBehaviour());
+            addBehaviour(new UpdateAvailabilityBehaviour(this));
         } else {
             System.err.println("Doctor Agent requires arguments: id, name, specialization");
             doDelete();
@@ -72,7 +72,7 @@ public class DoctorAgent extends Agent {
                 MessageTemplate.MatchConversationId(MessageProtocol.RESOURCE_ALLOCATION)
             );
             
-            ACLMessage msg = myAgent.receive(mt);
+            ACLMessage msg = DoctorAgent.this.receive(mt);
             if (msg != null) {
                 ACLMessage reply = msg.createReply();
                 
@@ -150,7 +150,7 @@ public class DoctorAgent extends Agent {
             template.addServices(sd);
             
             try {
-                DFAgentDescription[] result = DFService.search(myAgent, template);
+                DFAgentDescription[] result = DFService.search(DoctorAgent.this, template);
                 if (result.length > 0) {
                     inform.addReceiver(result[0].getName());
                     inform.setConversationId(MessageProtocol.STATUS_UPDATE);
@@ -175,8 +175,8 @@ public class DoctorAgent extends Agent {
      * Periodic behavior to update availability status
      */
     private class UpdateAvailabilityBehaviour extends TickerBehaviour {
-        public UpdateAvailabilityBehaviour() {
-            super(myAgent, 10000); // Update every 10 seconds
+        public UpdateAvailabilityBehaviour(Agent a) {
+            super(a, 10000); // Update every 10 seconds
         }
         
         @Override

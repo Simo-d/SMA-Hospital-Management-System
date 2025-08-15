@@ -115,47 +115,79 @@ public class PatientAgent extends Agent {
     }
     
     /**
-     * Behavior to wait for resource allocation from scheduler
+     * Behavior to wait for resource allocation from scheduler and handle status requests
      */
     private class WaitForAllocationBehaviour extends CyclicBehaviour {
         @Override
         public void action() {
-            // Listen for status updates from scheduler
-            MessageTemplate mt = MessageTemplate.and(
+            // Template for allocation messages
+            MessageTemplate allocationTemplate = MessageTemplate.and(
                 MessageTemplate.MatchConversationId(MessageProtocol.STATUS_UPDATE),
                 MessageTemplate.MatchPerformative(ACLMessage.INFORM)
             );
             
+            // Template for status request messages
+            MessageTemplate statusRequestTemplate = MessageTemplate.and(
+                MessageTemplate.MatchConversationId(MessageProtocol.STATUS_UPDATE),
+                MessageTemplate.MatchPerformative(ACLMessage.REQUEST)
+            );
+            
+            // Combined template
+            MessageTemplate mt = MessageTemplate.or(allocationTemplate, statusRequestTemplate);
+            
             ACLMessage msg = myAgent.receive(mt);
             if (msg != null) {
-                String content = msg.getContent();
-                if (content.startsWith("RESOURCES_ALLOCATED:")) {
-                    String[] parts = content.split(":");
-                    if (parts.length >= 3) {
-                        String doctorId = parts[1];
-                        String roomId = parts[2];
-                        String equipmentId = parts.length > 3 ? parts[3] : "NONE";
+                if (msg.getPerformative() == ACLMessage.REQUEST) {
+                    // Handle status request from monitoring agent
+                    if (msg.getContent().equals("REQUEST_STATUS")) {
+                        // Send patient data back to requester
+                        ACLMessage reply = msg.createReply();
+                        reply.setPerformative(ACLMessage.INFORM);
                         
-                        patientData.setAssignedDoctor(doctorId);
-                        patientData.setAssignedRoom(roomId);
-                        patientData.setRequiredEquipment(equipmentId);
-                        patientData.setStatus("IN_TREATMENT");
-                        
-                        System.out.println(getLocalName() + " allocated resources - Doctor: " + 
-                            doctorId + ", Room: " + roomId + ", Equipment: " + equipmentId);
-                        
-                        // Simulate treatment duration
-                        long duration = SchedulingAlgorithm.estimateTreatmentDuration(patientData.getTreatmentType());
-                        myAgent.addBehaviour(new WakerBehaviour(myAgent, duration) {
-                            @Override
-                            protected void onWake() {
-                                completeTreatment();
-                            }
-                        });
+                        try {
+                            // Serialize patient data
+                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                            ObjectOutputStream oos = new ObjectOutputStream(baos);
+                            oos.writeObject(patientData);
+                            reply.setByteSequenceContent(baos.toByteArray());
+                            
+                            myAgent.send(reply);
+                            System.out.println(getLocalName() + " sent status update");
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
                     }
-                } else if (content.startsWith("ALLOCATION_FAILED:")) {
-                    System.out.println(getLocalName() + " allocation failed, will retry later");
-                    // Scheduler will handle retrying
+                } else if (msg.getPerformative() == ACLMessage.INFORM) {
+                    // Handle allocation messages from scheduler
+                    String content = msg.getContent();
+                    if (content.startsWith("RESOURCES_ALLOCATED:")) {
+                        String[] parts = content.split(":");
+                        if (parts.length >= 3) {
+                            String doctorId = parts[1];
+                            String roomId = parts[2];
+                            String equipmentId = parts.length > 3 ? parts[3] : "NONE";
+                            
+                            patientData.setAssignedDoctor(doctorId);
+                            patientData.setAssignedRoom(roomId);
+                            patientData.setRequiredEquipment(equipmentId);
+                            patientData.setStatus("IN_TREATMENT");
+                            
+                            System.out.println(getLocalName() + " allocated resources - Doctor: " + 
+                                doctorId + ", Room: " + roomId + ", Equipment: " + equipmentId);
+                            
+                            // Simulate treatment duration
+                            long duration = SchedulingAlgorithm.estimateTreatmentDuration(patientData.getTreatmentType());
+                            myAgent.addBehaviour(new WakerBehaviour(myAgent, duration) {
+                                @Override
+                                protected void onWake() {
+                                    completeTreatment();
+                                }
+                            });
+                        }
+                    } else if (content.startsWith("ALLOCATION_FAILED:")) {
+                        System.out.println(getLocalName() + " allocation failed, will retry later");
+                        // Scheduler will handle retrying
+                    }
                 }
             } else {
                 block();

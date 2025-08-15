@@ -31,7 +31,7 @@ public class EquipmentAgent extends Agent {
             
             // Add behaviors
             addBehaviour(new HandleEquipmentRequestBehaviour());
-            addBehaviour(new MaintenanceCheckBehaviour());
+            addBehaviour(new MaintenanceCheckBehaviour(this));
         } else {
             System.err.println("Equipment Agent requires arguments: id, type");
             doDelete();
@@ -66,7 +66,7 @@ public class EquipmentAgent extends Agent {
                 MessageTemplate.MatchConversationId(MessageProtocol.RESOURCE_ALLOCATION)
             );
             
-            ACLMessage msg = myAgent.receive(mt);
+            ACLMessage msg = EquipmentAgent.this.receive(mt);
             if (msg != null) {
                 ACLMessage reply = msg.createReply();
                 String content = msg.getContent();
@@ -137,8 +137,8 @@ public class EquipmentAgent extends Agent {
      * Periodic behavior to check maintenance requirements
      */
     private class MaintenanceCheckBehaviour extends TickerBehaviour {
-        public MaintenanceCheckBehaviour() {
-            super(myAgent, 60000); 
+        public MaintenanceCheckBehaviour(Agent a) {
+            super(a, 60000); 
         }
         
         @Override
