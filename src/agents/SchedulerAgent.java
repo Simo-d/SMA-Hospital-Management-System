@@ -281,7 +281,7 @@ public class SchedulerAgent extends Agent {
                         assignMsg.setContent(MessageProtocol.ASSIGN_PATIENT + ":" + 
                                            patient.getId() + ":" + patient.getTreatmentType());
                         myAgent.send(assignMsg);
-                        System.out.println("Doctor assigned to patient " + patient.getName() + ": " + selectedDoctor.getLocalName());
+                        System.out.println("Doctor assigned to patient " + patient.getName() + ": " + patient.getAssignedDoctor());
                     } else {
                         // No doctor available, put patient back in queue
                         scheduler.addPatient(patient);
@@ -368,7 +368,7 @@ public class SchedulerAgent extends Agent {
                         allocateMsg.setContent(MessageProtocol.ALLOCATE_RESOURCE + ":" + 
                                              patient.getId() + ":" + patient.getAssignedDoctor());
                         myAgent.send(allocateMsg);
-                        System.out.println("Room assigned to patient " + patient.getName() + ": " + selectedRoom.getLocalName());
+                        System.out.println("Room assigned to patient " + patient.getName() + ": " + patient.getAssignedRoom());
                     } else {
                         // No room available, put patient back in queue
                         scheduler.addPatient(patient);
@@ -456,7 +456,7 @@ public class SchedulerAgent extends Agent {
                         allocateMsg.setConversationId(MessageProtocol.RESOURCE_ALLOCATION);
                         allocateMsg.setContent(MessageProtocol.ALLOCATE_RESOURCE + ":" + patient.getId());
                         myAgent.send(allocateMsg);
-                        System.out.println("Equipment assigned to patient " + patient.getName() + ": " + selectedEquipment.getLocalName());
+                        System.out.println("Equipment assigned to patient " + patient.getName() + ": " + patient.getRequiredEquipment());
                     } else {
                         // No equipment available, put patient back in queue
                         scheduler.addPatient(patient);

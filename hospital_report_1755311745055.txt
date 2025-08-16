@@ -1,0 +1,17 @@
+Hospital Analytics Report
+Generated: 2025-08-16T03:35:45.055004
+
+=== Current Metrics ===
+efficiency_score: 0.00
+queue_length: 0.00
+doctor_utilization: 0.00
+waiting_patients: 0.00
+avg_wait_time: 0.00
+treated_patients: 0.00
+total_patients: 0.00
+equipment_utilization: 0.00
+throughput: 0.00
+success_rate: 0.00
+room_utilization: 0.00
+
+=== Active Agents ===

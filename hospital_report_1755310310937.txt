@@ -1,0 +1,10 @@
+Hospital Analytics Report
+Generated: 2025-08-16T03:11:50.936101
+
+=== Current Metrics ===
+doctor_utilization: 0.00
+avg_wait_time: 0.00
+total_patients: 205.00
+equipment_utilization: 0.00
+success_rate: 0.00
+room_utilization: 0.00

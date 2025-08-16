@@ -19,6 +19,9 @@ nb-configuration.xml
 APDescription.txt
 MTPs-Main-Container.txt
 
+# Project specific #
+report/
+
 # OS specific files #
 .DS_Store
 .DS_Store?

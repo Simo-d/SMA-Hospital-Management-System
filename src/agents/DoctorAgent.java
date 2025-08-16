@@ -107,6 +107,10 @@ public class DoctorAgent extends Agent {
                             System.out.println(getLocalName() + " assigned to patient " + patientId + 
                                 " for " + treatmentType);
                             
+                            // Notify monitor
+                            notifyMonitor("RESOURCE_STATUS:DOCTOR:BUSY");
+                            notifyMonitor("ALLOCATION_SUCCESS:DOCTOR:" + doctorData.getId());
+                            
                             // Schedule treatment completion
                             long duration = SchedulingAlgorithm.estimateTreatmentDuration(treatmentType);
                             myAgent.addBehaviour(new WakerBehaviour(myAgent, duration) {
@@ -165,6 +169,9 @@ public class DoctorAgent extends Agent {
             doctorData.setAvailable(true);
             doctorData.setCurrentPatientId(null);
             
+            // Notify monitor
+            notifyMonitor("RESOURCE_STATUS:DOCTOR:AVAILABLE");
+            
             System.out.println(getLocalName() + " stats - Patients served: " + 
                 doctorData.getPatientsServed() + ", Avg service time: " + 
                 (doctorData.getAverageServiceTime() / 1000) + " seconds");
@@ -183,6 +190,28 @@ public class DoctorAgent extends Agent {
         protected void onTick() {
             // Could implement more complex availability logic here
             // For example, scheduled breaks, shift changes, etc.
+        }
+    }
+    
+    /**
+     * Helper method to notify monitoring agent
+     */
+    private void notifyMonitor(String message) {
+        DFAgentDescription template = new DFAgentDescription();
+        ServiceDescription sd = new ServiceDescription();
+        sd.setType("monitoring-service");
+        template.addServices(sd);
+        
+        try {
+            DFAgentDescription[] result = DFService.search(this, template);
+            if (result.length > 0) {
+                ACLMessage inform = new ACLMessage(ACLMessage.INFORM);
+                inform.addReceiver(result[0].getName());
+                inform.setContent(message);
+                send(inform);
+            }
+        } catch (FIPAException fe) {
+            // Monitoring agent might not be available
         }
     }
     

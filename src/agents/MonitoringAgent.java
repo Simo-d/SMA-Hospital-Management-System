@@ -3,328 +3,544 @@ package agents;
 import jade.core.Agent;
 import jade.core.AID;
 import jade.core.behaviours.*;
-import jade.wrapper.ContainerController;
-import jade.wrapper.AgentController;
-import jade.wrapper.StaleProxyException;
 import jade.lang.acl.ACLMessage;
 import jade.lang.acl.MessageTemplate;
 import jade.domain.DFService;
 import jade.domain.FIPAException;
 import jade.domain.FIPAAgentManagement.DFAgentDescription;
 import jade.domain.FIPAAgentManagement.ServiceDescription;
+import analytics.AnalyticsDashboard;
+import ml.WaitTimePredictor;
 
-import gui.HospitalGUI;
-import models.Patient;
-import utils.MessageProtocol;
-
+import javax.swing.SwingUtilities;
 import java.util.*;
-import java.io.ByteArrayInputStream;
-import java.io.ObjectInputStream;
-import java.io.IOException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.io.*;
 
 /**
- * Monitoring Agent - Manages the GUI and monitors the hospital system
+ * Enhanced Monitoring Agent - Collects real-time metrics from all agents
  * Master IA - Systèmes Multi-Agents Project
  */
 public class MonitoringAgent extends Agent {
-    private HospitalGUI gui;
-    private List<Patient> patients;
-    private List<Map<String, Object>> doctors;
-    private List<Map<String, Object>> rooms;
-    private List<Map<String, Object>> equipment;
     
-    // Statistics
-    private int totalPatients;
-    private double avgWaitTime;
-    private double successRate;
-    private double resourceUtilization;
+    private AnalyticsDashboard dashboard;
+    private WaitTimePredictor predictor;
+    
+    // Metrics storage
+    private Map<String, Double> systemMetrics;
+    private Map<AID, AgentStatus> agentStatuses;
+    
+    // Counters
+    private int totalPatients = 0;
+    private int treatedPatients = 0;
+    private int waitingPatients = 0;
+    private double totalWaitTime = 0;
+    private long lastUpdateTime;
+    
+    // Resource tracking
+    private Map<String, ResourceStatus> doctorStatus;
+    private Map<String, ResourceStatus> roomStatus;
+    private Map<String, ResourceStatus> equipmentStatus;
+    
+    // Store reference to dashboard for updates
+    private static AnalyticsDashboard dashboardReference;
     
     @Override
     protected void setup() {
-        System.out.println("Monitoring Agent " + getLocalName() + " started.");
+        System.out.println("Monitoring Agent " + getLocalName() + " started");
         
         // Initialize data structures
-        patients = new ArrayList<>();
-        doctors = new ArrayList<>();
-        rooms = new ArrayList<>();
-        equipment = new ArrayList<>();
+        systemMetrics = new ConcurrentHashMap<>();
+        agentStatuses = new ConcurrentHashMap<>();
+        doctorStatus = new ConcurrentHashMap<>();
+        roomStatus = new ConcurrentHashMap<>();
+        equipmentStatus = new ConcurrentHashMap<>();
+        predictor = new WaitTimePredictor();
+        lastUpdateTime = System.currentTimeMillis();
         
-        // Initialize statistics
-        totalPatients = 0;
-        avgWaitTime = 0.0;
-        successRate = 0.0;
-        resourceUtilization = 0.0;
+        // Initialize metrics
+        initializeMetrics();
         
-        // Create and show GUI
-        gui = new HospitalGUI(this);
+        // Register in Yellow Pages
+        registerInYellowPages();
+        
+        // Create and show dashboard
+        SwingUtilities.invokeLater(() -> {
+            dashboard = new AnalyticsDashboard();
+            dashboard.setMainContainer(getContainerController());
+            dashboard.setVisible(true);
+            dashboardReference = dashboard; // Store reference
+        });
         
         // Add behaviors
-        addBehaviour(new ResourceMonitorBehaviour(this, 2000)); // Update every 2 seconds
-        addBehaviour(new StatisticsCollectorBehaviour(this, 5000)); // Collect stats every 5 seconds
-        
-        // Add behavior to handle patient status responses
-         addBehaviour(new CyclicBehaviour() {
-             @Override
-             public void action() {
-                 MessageTemplate mt = MessageTemplate.and(
-                     MessageTemplate.MatchConversationId(MessageProtocol.STATUS_UPDATE),
-                     MessageTemplate.MatchPerformative(ACLMessage.INFORM)
-                 );
-                 
-                 ACLMessage msg = myAgent.receive(mt);
-                 if (msg != null) {
-                     try {
-                         // Deserialize the patient data
-                         ByteArrayInputStream bais = new ByteArrayInputStream(msg.getByteSequenceContent());
-                         ObjectInputStream ois = new ObjectInputStream(bais);
-                         Patient patient = (Patient) ois.readObject();
-                         
-                         // Update or add the patient to our list
-                         boolean found = false;
-                         for (int i = 0; i < patients.size(); i++) {
-                             if (patients.get(i).getName().equals(patient.getName())) {
-                                 patients.set(i, patient);
-                                 found = true;
-                                 break;
-                             }
-                         }
-                         
-                         if (!found) {
-                             patients.add(patient);
-                         }
-                         
-                         // Update the GUI immediately
-                         gui.updatePatientTable(patients);
-                         
-                     } catch (IOException | ClassNotFoundException e) {
-                         e.printStackTrace();
-                     }
-                 } else {
-                     block();
-                 }
-             }
-         });
+        addBehaviour(new MetricsCollectorBehaviour());
+        addBehaviour(new ResourceMonitorBehaviour(this, 2000)); // Every 2 seconds
+        addBehaviour(new DashboardUpdaterBehaviour(this, 1000)); // Every second
+        addBehaviour(new StatisticsCalculatorBehaviour(this, 5000)); // Every 5 seconds
     }
     
-    /**
-     * Create a new patient agent
-     */
-    public void createPatientAgent(String name, int urgency, String treatment) {
+    private void initializeMetrics() {
+        systemMetrics.put("total_patients", 0.0);
+        systemMetrics.put("treated_patients", 0.0);
+        systemMetrics.put("waiting_patients", 0.0);
+        systemMetrics.put("avg_wait_time", 0.0);
+        systemMetrics.put("success_rate", 100.0);
+        systemMetrics.put("doctor_utilization", 0.0);
+        systemMetrics.put("room_utilization", 0.0);
+        systemMetrics.put("equipment_utilization", 0.0);
+        systemMetrics.put("throughput", 0.0);
+        systemMetrics.put("queue_length", 0.0);
+    }
+    
+    private void registerInYellowPages() {
+        DFAgentDescription dfd = new DFAgentDescription();
+        dfd.setName(getAID());
+        ServiceDescription sd = new ServiceDescription();
+        sd.setType("monitoring-service");
+        sd.setName("System-Monitor");
+        dfd.addServices(sd);
+        
         try {
-            // Get container controller
-            ContainerController container = getContainerController();
-            
-            // Create unique agent name
-            String agentName = "Patient_" + name + "_" + System.currentTimeMillis();
-            
-            // Start patient agent with arguments
-            Object[] args = new Object[] {name, urgency, treatment};
-            AgentController patientController = container.createNewAgent(agentName, "agents.PatientAgent", args);
-            patientController.start();
-            
-            System.out.println("Created new patient agent: " + agentName);
-        } catch (StaleProxyException e) {
-            e.printStackTrace();
+            DFService.register(this, dfd);
+        } catch (FIPAException fe) {
+            fe.printStackTrace();
         }
     }
     
     /**
-     * Behavior to monitor resources and update GUI
+     * Collect metrics from all agents
+     */
+    private class MetricsCollectorBehaviour extends CyclicBehaviour {
+        @Override
+        public void action() {
+            MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.INFORM);
+            ACLMessage msg = myAgent.receive(mt);
+            
+            if (msg != null) {
+                String content = msg.getContent();
+                
+                if (content != null) {
+                    // Parse different types of metric updates
+                    if (content.startsWith("PATIENT_REGISTERED:")) {
+                        handlePatientRegistration(content);
+                    } else if (content.startsWith("PATIENT_WAITING:")) {
+                        handlePatientWaiting(content);
+                    } else if (content.startsWith("PATIENT_TREATED:")) {
+                        handlePatientTreated(content);
+                    } else if (content.startsWith("RESOURCE_STATUS:")) {
+                        handleResourceStatus(msg.getSender(), content);
+                    } else if (content.startsWith("ALLOCATION_SUCCESS:")) {
+                        handleAllocationSuccess(content);
+                    } else if (content.startsWith("ALLOCATION_FAILED:")) {
+                        handleAllocationFailed(content);
+                    } else if (content.startsWith("WAIT_TIME:")) {
+                        handleWaitTimeUpdate(content);
+                    }
+                }
+            } else {
+                block();
+            }
+        }
+        
+        private void handlePatientRegistration(String content) {
+            totalPatients++;
+            waitingPatients++;
+            systemMetrics.put("total_patients", (double) totalPatients);
+            systemMetrics.put("waiting_patients", (double) waitingPatients);
+            updateQueueLength();
+            
+            // Update dashboard immediately
+            if (dashboardReference != null) {
+                SwingUtilities.invokeLater(() -> {
+                    dashboardReference.updateMetric("total_patients", (double) totalPatients);
+                    dashboardReference.updateMetric("waiting_patients", (double) waitingPatients);
+                    dashboardReference.updateMetric("queue_length", (double) waitingPatients);
+                });
+            }
+            
+            System.out.println("Monitor: Patient registered. Total: " + totalPatients);
+        }
+        
+        private void handlePatientWaiting(String content) {
+            String[] parts = content.split(":");
+            if (parts.length >= 2) {
+                try {
+                    double waitTime = Double.parseDouble(parts[1]);
+                    updateWaitTime(waitTime);
+                } catch (NumberFormatException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        
+        private void handlePatientTreated(String content) {
+            treatedPatients++;
+            if (waitingPatients > 0) waitingPatients--;
+            
+            systemMetrics.put("treated_patients", (double) treatedPatients);
+            systemMetrics.put("waiting_patients", (double) waitingPatients);
+            
+            // Update success rate
+            if (totalPatients > 0) {
+                double successRate = (treatedPatients * 100.0) / totalPatients;
+                systemMetrics.put("success_rate", successRate);
+            }
+            
+            updateQueueLength();
+            
+            // Update dashboard immediately
+            if (dashboardReference != null) {
+                SwingUtilities.invokeLater(() -> {
+                    dashboardReference.updateMetric("treated_patients", (double) treatedPatients);
+                    dashboardReference.updateMetric("waiting_patients", (double) waitingPatients);
+                    dashboardReference.updateMetric("success_rate", systemMetrics.get("success_rate"));
+                    dashboardReference.updateMetric("queue_length", (double) waitingPatients);
+                });
+            }
+            
+            System.out.println("Monitor: Patient treated. Total treated: " + treatedPatients);
+        }
+        
+        private void handleResourceStatus(AID sender, String content) {
+            String[] parts = content.split(":");
+            if (parts.length >= 3) {
+                String resourceType = parts[1];
+                String status = parts[2];
+                
+                ResourceStatus rs = new ResourceStatus(sender.getLocalName(), status.equals("BUSY"));
+                
+                if (resourceType.equals("DOCTOR")) {
+                    doctorStatus.put(sender.getLocalName(), rs);
+                } else if (resourceType.equals("ROOM")) {
+                    roomStatus.put(sender.getLocalName(), rs);
+                } else if (resourceType.equals("EQUIPMENT")) {
+                    equipmentStatus.put(sender.getLocalName(), rs);
+                }
+                
+                updateUtilization();
+            }
+        }
+        
+        private void handleAllocationSuccess(String content) {
+            // Track successful allocations
+            double currentSuccess = systemMetrics.getOrDefault("allocation_success", 0.0);
+            systemMetrics.put("allocation_success", currentSuccess + 1);
+        }
+        
+        private void handleAllocationFailed(String content) {
+            // Track failed allocations
+            double currentFailed = systemMetrics.getOrDefault("allocation_failed", 0.0);
+            systemMetrics.put("allocation_failed", currentFailed + 1);
+        }
+        
+        private void handleWaitTimeUpdate(String content) {
+            String[] parts = content.split(":");
+            if (parts.length >= 2) {
+                try {
+                    double waitTime = Double.parseDouble(parts[1]);
+                    updateWaitTime(waitTime);
+                    
+                    // Update ML model
+                    if (parts.length >= 4) {
+                        int queueSize = Integer.parseInt(parts[2]);
+                        double resourceAvail = Double.parseDouble(parts[3]);
+                        // Note: We'd need patient info for full ML update
+                    }
+                } catch (NumberFormatException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        
+        private void updateWaitTime(double waitTime) {
+            totalWaitTime += waitTime;
+            if (treatedPatients > 0) {
+                double avgWaitTime = totalWaitTime / treatedPatients;
+                systemMetrics.put("avg_wait_time", avgWaitTime / 60000.0); // Convert to minutes
+                
+                // Update dashboard immediately
+                if (dashboardReference != null) {
+                    SwingUtilities.invokeLater(() -> {
+                        dashboardReference.updateMetric("avg_wait_time", avgWaitTime / 60000.0);
+                    });
+                }
+            }
+        }
+        
+        private void updateQueueLength() {
+            systemMetrics.put("queue_length", (double) waitingPatients);
+        }
+        
+        private void updateUtilization() {
+            // Calculate doctor utilization
+            if (!doctorStatus.isEmpty()) {
+                long busyDoctors = doctorStatus.values().stream()
+                    .filter(ResourceStatus::isBusy)
+                    .count();
+                double doctorUtil = (busyDoctors * 100.0) / doctorStatus.size();
+                systemMetrics.put("doctor_utilization", doctorUtil);
+            }
+            
+            // Calculate room utilization
+            if (!roomStatus.isEmpty()) {
+                long busyRooms = roomStatus.values().stream()
+                    .filter(ResourceStatus::isBusy)
+                    .count();
+                double roomUtil = (busyRooms * 100.0) / roomStatus.size();
+                systemMetrics.put("room_utilization", roomUtil);
+            }
+            
+            // Calculate equipment utilization
+            if (!equipmentStatus.isEmpty()) {
+                long busyEquipment = equipmentStatus.values().stream()
+                    .filter(ResourceStatus::isBusy)
+                    .count();
+                double equipUtil = (busyEquipment * 100.0) / equipmentStatus.size();
+                systemMetrics.put("equipment_utilization", equipUtil);
+            }
+            
+            // Update dashboard immediately
+            if (dashboardReference != null) {
+                SwingUtilities.invokeLater(() -> {
+                    dashboardReference.updateMetric("doctor_utilization", 
+                        systemMetrics.getOrDefault("doctor_utilization", 0.0));
+                    dashboardReference.updateMetric("room_utilization", 
+                        systemMetrics.getOrDefault("room_utilization", 0.0));
+                    dashboardReference.updateMetric("equipment_utilization", 
+                        systemMetrics.getOrDefault("equipment_utilization", 0.0));
+                });
+            }
+        }
+    }
+    
+    /**
+     * Monitor resource agents
      */
     private class ResourceMonitorBehaviour extends TickerBehaviour {
-        public ResourceMonitorBehaviour(Agent a, long period) {
-            super(a, period);
+        public ResourceMonitorBehaviour(Agent agent, long period) {
+            super(agent, period);
         }
         
         @Override
         protected void onTick() {
-            // Clear current data
-            patients.clear();
-            doctors.clear();
-            rooms.clear();
-            equipment.clear();
-            
-            // Collect patient data
-            collectPatientData();
-            
-            // Collect doctor data
-            collectDoctorData();
-            
-            // Collect room data
-            collectRoomData();
-            
-            // Collect equipment data
-            collectEquipmentData();
-            
-            // Update GUI
-            gui.updatePatientTable(patients);
-            gui.updateDoctorTable(doctors);
-            gui.updateRoomTable(rooms);
-            gui.updateEquipmentTable(equipment);
+            // Query all registered agents for their status
+            queryAgentStatuses();
         }
         
-        private void collectPatientData() {
-            DFAgentDescription template = new DFAgentDescription();
-            ServiceDescription sd = new ServiceDescription();
-            sd.setType(MessageProtocol.PATIENT_SERVICE);
-            template.addServices(sd);
-            
+        private void queryAgentStatuses() {
+            // Query doctors
+            queryResourceType("doctor-service", "DOCTOR");
+            // Query rooms
+            queryResourceType("room-service", "ROOM");
+            // Query equipment
+            queryResourceType("equipment-service", "EQUIPMENT");
+            // Query patients
+            queryResourceType("patient-service", "PATIENT");
+        }
+        
+        private void queryResourceType(String serviceType, String resourceType) {
             try {
-                // Search for patient agents in the DF
-                DFAgentDescription[] result = DFService.search(myAgent, template);
-                System.out.println("Found " + result.length + " patient agents");
+                DFAgentDescription template = new DFAgentDescription();
+                ServiceDescription sd = new ServiceDescription();
+                sd.setType(serviceType);
+                template.addServices(sd);
                 
-                // Request status from each patient agent
-                for (DFAgentDescription agent : result) {
-                    AID patientAID = agent.getName();
-                    
-                    // Send request for patient data
-                    ACLMessage request = new ACLMessage(ACLMessage.REQUEST);
-                    request.addReceiver(patientAID);
-                    request.setConversationId(MessageProtocol.STATUS_UPDATE);
-                    request.setContent("REQUEST_STATUS");
-                    myAgent.send(request);
+                DFAgentDescription[] results = DFService.search(myAgent, template);
+                
+                for (DFAgentDescription dfd : results) {
+                    // Send status query
+                    ACLMessage query = new ACLMessage(ACLMessage.REQUEST);
+                    query.addReceiver(dfd.getName());
+                    query.setContent("GET_STATUS");
+                    query.setConversationId("status-query");
+                    myAgent.send(query);
                 }
             } catch (FIPAException fe) {
                 fe.printStackTrace();
             }
-        }
-        
-        private void collectDoctorData() {
-            DFAgentDescription template = new DFAgentDescription();
-            ServiceDescription sd = new ServiceDescription();
-            sd.setType(MessageProtocol.DOCTOR_SERVICE);
-            template.addServices(sd);
-            
-            try {
-                DFAgentDescription[] result = DFService.search(myAgent, template);
-                for (DFAgentDescription agent : result) {
-                    // For now, we'll create dummy doctor data
-                    Map<String, Object> doctor = new HashMap<>();
-                    doctor.put("id", agent.getName().getLocalName());
-                    doctor.put("name", agent.getName().getLocalName().replace("Doctor", "Dr."));
-                    doctor.put("specialization", getRandomSpecialization());
-                    doctor.put("available", Math.random() > 0.5);
-                    doctor.put("currentPatient", (Boolean)doctor.get("available") ? null : "Patient_" + (int)(Math.random() * 10));
-                    doctor.put("patientsServed", (int)(Math.random() * 20));
-                    
-                    doctors.add(doctor);
-                }
-            } catch (FIPAException fe) {
-                fe.printStackTrace();
-            }
-        }
-        
-        private void collectRoomData() {
-            DFAgentDescription template = new DFAgentDescription();
-            ServiceDescription sd = new ServiceDescription();
-            sd.setType(MessageProtocol.ROOM_SERVICE);
-            template.addServices(sd);
-            
-            try {
-                DFAgentDescription[] result = DFService.search(myAgent, template);
-                for (DFAgentDescription agent : result) {
-                    // For now, we'll create dummy room data
-                    Map<String, Object> room = new HashMap<>();
-                    room.put("id", agent.getName().getLocalName());
-                    room.put("type", getRandomRoomType());
-                    room.put("available", Math.random() > 0.5);
-                    
-                    if (!(Boolean)room.get("available")) {
-                        room.put("currentPatient", "Patient_" + (int)(Math.random() * 10));
-                        room.put("currentDoctor", "Doctor_" + (int)(Math.random() * 5));
-                    } else {
-                        room.put("currentPatient", null);
-                        room.put("currentDoctor", null);
-                    }
-                    
-                    rooms.add(room);
-                }
-            } catch (FIPAException fe) {
-                fe.printStackTrace();
-            }
-        }
-        
-        private void collectEquipmentData() {
-            DFAgentDescription template = new DFAgentDescription();
-            ServiceDescription sd = new ServiceDescription();
-            sd.setType(MessageProtocol.EQUIPMENT_SERVICE);
-            template.addServices(sd);
-            
-            try {
-                DFAgentDescription[] result = DFService.search(myAgent, template);
-                for (DFAgentDescription agent : result) {
-                    // For now, we'll create dummy equipment data
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("id", agent.getName().getLocalName());
-                    item.put("type", getRandomEquipmentType());
-                    item.put("available", Math.random() > 0.3);
-                    item.put("currentPatient", (Boolean)item.get("available") ? null : "Patient_" + (int)(Math.random() * 10));
-                    item.put("usageCount", (int)(Math.random() * 50));
-                    
-                    equipment.add(item);
-                }
-            } catch (FIPAException fe) {
-                fe.printStackTrace();
-            }
-        }
-        
-        private String getRandomTreatment() {
-            String[] treatments = {"CONSULTATION", "EMERGENCY", "SURGERY", "CHECKUP", "XRAY", "MRI", "CT_SCAN"};
-            return treatments[(int)(Math.random() * treatments.length)];
-        }
-        
-        private String getRandomStatus() {
-            String[] statuses = {"WAITING", "IN_TREATMENT", "COMPLETED"};
-            return statuses[(int)(Math.random() * statuses.length)];
-        }
-        
-        private String getRandomSpecialization() {
-            String[] specializations = {"General", "Surgery", "Cardiology", "Neurology", "Pediatrics", "Radiology"};
-            return specializations[(int)(Math.random() * specializations.length)];
-        }
-        
-        private String getRandomRoomType() {
-            String[] types = {"CONSULTATION", "SURGERY", "EMERGENCY", "ICU"};
-            return types[(int)(Math.random() * types.length)];
-        }
-        
-        private String getRandomEquipmentType() {
-            String[] types = {"MRI", "CT_SCAN", "XRAY", "VENTILATOR", "ECG"};
-            return types[(int)(Math.random() * types.length)];
         }
     }
     
     /**
-     * Behavior to collect system statistics
+     * Update dashboard with latest metrics
      */
-    private class StatisticsCollectorBehaviour extends TickerBehaviour {
-        public StatisticsCollectorBehaviour(Agent a, long period) {
-            super(a, period);
+    private class DashboardUpdaterBehaviour extends TickerBehaviour {
+        public DashboardUpdaterBehaviour(Agent agent, long period) {
+            super(agent, period);
         }
         
         @Override
         protected void onTick() {
-            // For now, we'll generate random statistics
-            // In a real implementation, we would query the scheduler agent for actual statistics
-            totalPatients = patients.size();
-            avgWaitTime = Math.random() * 120; // Random wait time up to 2 minutes
-            successRate = 70 + Math.random() * 30; // Random success rate between 70-100%
-            resourceUtilization = 50 + Math.random() * 50; // Random utilization between 50-100%
-            
-            // Update GUI with statistics
-            gui.updateStatistics(totalPatients, avgWaitTime, successRate, resourceUtilization);
+            if (dashboardReference != null) {
+                // Send all current metrics to dashboard
+                SwingUtilities.invokeLater(() -> {
+                    // Update all metrics
+                    dashboardReference.updateMetric("total_patients", (double) totalPatients);
+                    dashboardReference.updateMetric("treated_patients", (double) treatedPatients);
+                    dashboardReference.updateMetric("waiting_patients", (double) waitingPatients);
+                    dashboardReference.updateMetric("queue_length", (double) waitingPatients);
+                    
+                    for (Map.Entry<String, Double> entry : systemMetrics.entrySet()) {
+                        dashboardReference.updateMetric(entry.getKey(), entry.getValue());
+                    }
+                    
+                    // Update time series data
+                    dashboardReference.updateTimeSeries("wait_time", 
+                        systemMetrics.getOrDefault("avg_wait_time", 0.0));
+                    dashboardReference.updateTimeSeries("throughput", 
+                        calculateThroughput());
+                    dashboardReference.updateTimeSeries("utilization", 
+                        calculateAverageUtilization());
+                    dashboardReference.updateTimeSeries("queue_length", 
+                        (double) waitingPatients);
+                });
+            }
+        }
+        
+        private double calculateThroughput() {
+            long currentTime = System.currentTimeMillis();
+            double elapsedHours = (currentTime - lastUpdateTime) / 3600000.0;
+            if (elapsedHours > 0) {
+                return treatedPatients / elapsedHours;
+            }
+            return 0;
+        }
+        
+        private double calculateAverageUtilization() {
+            double doctorUtil = systemMetrics.getOrDefault("doctor_utilization", 0.0);
+            double roomUtil = systemMetrics.getOrDefault("room_utilization", 0.0);
+            double equipUtil = systemMetrics.getOrDefault("equipment_utilization", 0.0);
+            return (doctorUtil + roomUtil + equipUtil) / 3.0;
         }
     }
     
-
+    /**
+     * Calculate advanced statistics
+     */
+    private class StatisticsCalculatorBehaviour extends TickerBehaviour {
+        public StatisticsCalculatorBehaviour(Agent agent, long period) {
+            super(agent, period);
+        }
+        
+        @Override
+        protected void onTick() {
+            // Calculate additional statistics
+            calculateEfficiencyMetrics();
+            
+            // Print summary to console
+            printMetricsSummary();
+        }
+        
+        private void calculateEfficiencyMetrics() {
+            // System efficiency score
+            double efficiency = 0;
+            
+            // Factor 1: Low wait time (40% weight)
+            double avgWait = systemMetrics.getOrDefault("avg_wait_time", 0.0);
+            double waitScore = Math.max(0, 100 - avgWait * 5); // Penalty for wait time
+            efficiency += waitScore * 0.4;
+            
+            // Factor 2: High utilization (30% weight)
+            double avgUtil = calculateAverageUtilization();
+            efficiency += avgUtil * 0.3;
+            
+            // Factor 3: High success rate (30% weight)
+            double successRate = systemMetrics.getOrDefault("success_rate", 100.0);
+            efficiency += successRate * 0.3;
+            
+            systemMetrics.put("efficiency_score", efficiency);
+        }
+        
+        private double calculateAverageUtilization() {
+            double doctorUtil = systemMetrics.getOrDefault("doctor_utilization", 0.0);
+            double roomUtil = systemMetrics.getOrDefault("room_utilization", 0.0);
+            double equipUtil = systemMetrics.getOrDefault("equipment_utilization", 0.0);
+            return (doctorUtil + roomUtil + equipUtil) / 3.0;
+        }
+        
+        private void printMetricsSummary() {
+            System.out.println("\n=== System Metrics Summary ===");
+            System.out.println("Total Patients: " + totalPatients);
+            System.out.println("Treated: " + treatedPatients);
+            System.out.println("Waiting: " + waitingPatients);
+            System.out.println("Avg Wait Time: " + 
+                String.format("%.2f", systemMetrics.getOrDefault("avg_wait_time", 0.0)) + " min");
+            System.out.println("Success Rate: " + 
+                String.format("%.1f%%", systemMetrics.getOrDefault("success_rate", 0.0)));
+            System.out.println("Doctor Utilization: " + 
+                String.format("%.1f%%", systemMetrics.getOrDefault("doctor_utilization", 0.0)));
+            System.out.println("Room Utilization: " + 
+                String.format("%.1f%%", systemMetrics.getOrDefault("room_utilization", 0.0)));
+            System.out.println("Equipment Utilization: " + 
+                String.format("%.1f%%", systemMetrics.getOrDefault("equipment_utilization", 0.0)));
+            System.out.println("Efficiency Score: " + 
+                String.format("%.1f", systemMetrics.getOrDefault("efficiency_score", 0.0)));
+            System.out.println("==============================\n");
+        }
+    }
+    
+    /**
+     * Helper class for resource status
+     */
+    private static class ResourceStatus {
+        String name;
+        boolean busy;
+        long lastUpdate;
+        
+        ResourceStatus(String name, boolean busy) {
+            this.name = name;
+            this.busy = busy;
+            this.lastUpdate = System.currentTimeMillis();
+        }
+        
+        boolean isBusy() { return busy; }
+    }
+    
+    /**
+     * Helper class for agent status
+     */
+    private static class AgentStatus {
+        AID agent;
+        String type;
+        String status;
+        long lastHeartbeat;
+        
+        AgentStatus(AID agent, String type, String status) {
+            this.agent = agent;
+            this.type = type;
+            this.status = status;
+            this.lastHeartbeat = System.currentTimeMillis();
+        }
+    }
+    
+    // Public methods for dashboard to get metrics
+    public Map<String, Double> getSystemMetrics() {
+        return new HashMap<>(systemMetrics);
+    }
+    
+    public void resetMetrics() {
+        totalPatients = 0;
+        treatedPatients = 0;
+        waitingPatients = 0;
+        totalWaitTime = 0;
+        initializeMetrics();
+        System.out.println("Metrics reset");
+    }
     
     @Override
     protected void takeDown() {
-        // Close GUI
-        if (gui != null) {
-            gui.dispose();
+        // Close dashboard
+        if (dashboard != null) {
+            dashboard.dispose();
         }
-        System.out.println("Monitoring Agent " + getLocalName() + " terminating.");
+        
+        // Deregister from Yellow Pages
+        try {
+            DFService.deregister(this);
+        } catch (FIPAException fe) {
+            fe.printStackTrace();
+        }
+        
+        System.out.println("Monitoring Agent " + getLocalName() + " terminating");
     }
 }

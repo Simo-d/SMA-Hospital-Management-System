@@ -35,6 +35,9 @@ public class PatientAgent extends Agent {
             patientData = new Patient(name, urgency, treatment);
             System.out.println("Patient Agent " + getLocalName() + " initialized: " + patientData);
             
+            // Notify monitoring agent
+            notifyMonitor("PATIENT_REGISTERED:" + patientData.getId());
+            
             // Register in Yellow Pages
             registerInYellowPages();
             
@@ -210,6 +213,11 @@ public class PatientAgent extends Agent {
         complete.setContent(MessageProtocol.TREATMENT_COMPLETE + ":" + patientData.getId());
         send(complete);
         
+        // Notify monitoring agent
+        notifyMonitor("PATIENT_TREATED:" + patientData.getId());
+        notifyMonitor("WAIT_TIME:" + patientData.getWaitingTime() + ":" + 
+                     patientData.getUrgencyLevel() + ":0.7");
+        
         System.out.println(getLocalName() + " completed treatment. Total waiting time: " + 
             (patientData.getWaitingTime() / 1000) + " seconds");
         
@@ -231,7 +239,32 @@ public class PatientAgent extends Agent {
                 patientData.updateWaitingTime();
                 System.out.println(getLocalName() + " waiting time: " + 
                     (patientData.getWaitingTime() / 1000) + " seconds");
+                // Notify monitor about waiting status
+                notifyMonitor("PATIENT_WAITING:" + (patientData.getWaitingTime() / 1000));
             }
+        }
+    }
+    
+    /**
+     * Helper method to notify monitoring agent
+     */
+    private void notifyMonitor(String message) {
+        // Find monitoring agent
+        DFAgentDescription template = new DFAgentDescription();
+        ServiceDescription sd = new ServiceDescription();
+        sd.setType("monitoring-service");
+        template.addServices(sd);
+        
+        try {
+            DFAgentDescription[] result = DFService.search(this, template);
+            if (result.length > 0) {
+                ACLMessage inform = new ACLMessage(ACLMessage.INFORM);
+                inform.addReceiver(result[0].getName());
+                inform.setContent(message);
+                send(inform);
+            }
+        } catch (FIPAException fe) {
+            // Monitoring agent might not be available yet
         }
     }
     
